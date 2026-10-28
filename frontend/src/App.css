@@ -1026,6 +1026,46 @@ select:focus-visible, a:focus-visible, [tabindex]:focus-visible {
   .nav-item:hover, .button:hover:not(:disabled) { transform: none; }
 }
 
+.brand-assistant { position: fixed; right: 24px; bottom: 22px; z-index: 60; display: flex; align-items: flex-end; flex-direction: column; gap: 12px; }
+.assistant-toggle { display: inline-flex; min-height: 48px; align-items: center; gap: 9px; padding: 0 17px; border: 0; border-radius: 999px; color: #fff; background: var(--accent); box-shadow: 0 8px 24px rgba(37, 36, 58, .2); font: 600 12px var(--font-body); transition: transform .16s ease, box-shadow .16s ease; }
+.assistant-toggle:hover { transform: translateY(-2px); box-shadow: 0 11px 28px rgba(37, 36, 58, .24); }
+.assistant-toggle.open { background: #45445A; }
+.assistant-panel { display: flex; width: min(390px, calc(100vw - 32px)); height: min(550px, calc(100dvh - 105px)); min-height: 300px; flex-direction: column; overflow: hidden; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); box-shadow: 0 18px 55px rgba(37, 36, 58, .2); }
+.assistant-header { display: flex; min-height: 65px; align-items: center; gap: 11px; padding: 12px 15px; border-bottom: 1px solid var(--border); }
+.assistant-mark { display: grid; width: 35px; height: 35px; flex: 0 0 auto; place-items: center; border-radius: 11px; color: var(--accent); background: var(--lavender-soft); }
+.assistant-header strong, .assistant-header small { display: block; }
+.assistant-header strong { color: var(--text); font: 700 13px var(--font-display); }
+.assistant-header small { margin-top: 3px; color: var(--muted); font-size: 10px; }
+.assistant-close { display: grid; width: 32px; height: 32px; flex: 0 0 auto; place-items: center; margin-left: auto; border: 0; border-radius: 8px; color: var(--muted); background: transparent; }
+.assistant-close:hover { color: var(--text); background: #F7F4EF; }
+.assistant-messages { display: flex; min-height: 0; flex: 1; flex-direction: column; gap: 12px; overflow-y: auto; padding: 15px; overscroll-behavior: contain; }
+.assistant-message { max-width: 94%; padding: 11px 12px; border: 1px solid var(--border); border-radius: 12px 12px 12px 4px; background: #FAF8F5; }
+.assistant-message.user { align-self: flex-end; border-color: #DED8FF; border-radius: 12px 12px 4px 12px; background: var(--lavender-soft); }
+.assistant-message.error { border-color: #F0D8DA; background: #FFF4F3; }
+.assistant-message p { margin: 0; color: var(--text); font-size: 12px; line-height: 1.55; overflow-wrap: anywhere; white-space: pre-wrap; }
+.assistant-typing { color: var(--muted); }
+.assistant-sources { display: grid; gap: 7px; margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border); }
+.assistant-sources > strong { color: var(--accent); font-size: 9px; letter-spacing: .5px; text-transform: uppercase; }
+.assistant-source { display: grid; gap: 2px; min-width: 0; }
+.assistant-source > span { color: var(--text); font-size: 10px; font-weight: 600; overflow-wrap: anywhere; }
+.assistant-source > small { color: var(--muted); font-size: 10px; line-height: 1.4; overflow-wrap: anywhere; }
+.assistant-source details { color: var(--muted); font-size: 10px; }
+.assistant-source summary { width: fit-content; color: var(--accent); cursor: pointer; font-weight: 600; }
+.assistant-source details small { display: block; max-height: 150px; margin-top: 5px; overflow-y: auto; line-height: 1.45; overflow-wrap: anywhere; white-space: pre-wrap; }
+.assistant-form { display: flex; align-items: flex-end; gap: 8px; padding: 11px 12px; border-top: 1px solid var(--border); }
+.assistant-form textarea { min-width: 0; min-height: 43px; max-height: 100px; flex: 1; resize: vertical; padding: 10px 11px; border: 1px solid var(--border); border-radius: 9px; color: var(--text); background: #fff; font: 12px/1.4 var(--font-body); }
+.assistant-form textarea:focus { border-color: #B7A4FF; outline: 3px solid var(--focus-ring); }
+.assistant-form .button { min-width: 41px; min-height: 41px; padding: 0; }
+.assistant-disclaimer { margin: 0; padding: 0 13px 10px; color: var(--muted); font-size: 9px; }
+@media (max-width: 600px) {
+  .brand-assistant { right: 14px; bottom: 14px; left: 14px; gap: 9px; }
+  .assistant-panel { width: 100%; height: min(560px, calc(100dvh - 88px)); border-radius: 14px; }
+  .assistant-toggle { min-height: 46px; padding-inline: 15px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .assistant-toggle { transition: none; }
+}
+
 :root, body, #root, .app-shell { color: var(--text); background: var(--background); }
 html, body, #root { width: 100%; }
 body { font-family: var(--font-body); }

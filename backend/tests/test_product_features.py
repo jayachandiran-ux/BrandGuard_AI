@@ -1,7 +1,11 @@
+import json
 import os
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from contextlib import redirect_stdout
+from io import StringIO
 from unittest.mock import patch
 
 import numpy as np
@@ -308,6 +312,235 @@ class ProductFeatureTests(unittest.TestCase):
         self.assertEqual(persisted[revision["id"]]["status"], "Approved")
         self.assertEqual(persisted[revision["id"]]["content"], "Members enjoy practical design.")
         self.assertEqual(persisted[revision["id"]]["version_number"], 2)
+
+    def test_brand_assistant_returns_clear_answer_when_no_evidence_exists(self) -> None:
+        with patch.object(
+            main,
+            "get_guidelines",
+            return_value=main.Guidelines(brand_name="Northstar"),
+        ):
+            with patch.object(
+                main.knowledge_base,
+                "retrieve",
+                return_value={"status": "empty", "sources": [], "error": None},
+            ):
+                response = self.client.post(
+                    "/api/assistant",
+                    json={"question": "Which rule applies to this unrelated question?"},
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        result = response.json()
+        self.assertFalse(result["evidence_available"])
+        self.assertEqual(result["sources"], [])
+        self.assertIn("couldn't find", result["answer"].casefold())
+
+    def test_brand_assistant_reports_no_saved_reviews_for_today(self) -> None:
+        with patch.object(
+            main,
+            "get_guidelines",
+            return_value=main.Guidelines(brand_name="Northstar"),
+        ):
+            with patch.object(
+                main.knowledge_base,
+                "retrieve",
+                return_value={"status": "empty", "sources": [], "error": None},
+            ):
+                response = self.client.post(
+                    "/api/assistant",
+                    json={
+                        "question": "What are today's review contents?",
+                        "local_today": datetime.now(timezone.utc).date().isoformat(),
+                        "timezone_offset_minutes": 0,
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["answer"], "There are no saved reviews yet.")
+        self.assertFalse(response.json()["evidence_available"])
+
+    def test_brand_assistant_distinguishes_no_reviews_today_from_empty_history(self) -> None:
+        review = self.create_review("Previous campaign", "Yesterday's reviewed content.")
+        store = main.load_store()
+        item = next(item for item in store["reviews"] if item["id"] == review["id"])
+        item["created_at"] = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+        main.save_store(store)
+
+        with patch.object(
+            main,
+            "get_guidelines",
+            return_value=main.Guidelines(brand_name="Northstar"),
+        ):
+            with patch.object(
+                main.knowledge_base,
+                "retrieve",
+                return_value={"status": "empty", "sources": [], "error": None},
+            ):
+                response = self.client.post(
+                    "/api/assistant",
+                    json={
+                        "question": "What are today's review contents?",
+                        "local_today": datetime.now(timezone.utc).date().isoformat(),
+                        "timezone_offset_minutes": 0,
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertIn("No reviews have been saved today", response.json()["answer"])
+        self.assertFalse(response.json()["evidence_available"])
+
+    def test_brand_assistant_uses_actual_reviews_for_todays_history_question(self) -> None:
+        old_review = self.create_review("Previous campaign", "Old reviewed content.")
+        local_today = (datetime.now(timezone.utc) + timedelta(minutes=330)).date()
+        local_midnight_utc = (
+            datetime.combine(local_today, datetime.min.time(), timezone.utc)
+            - timedelta(minutes=330)
+        )
+        store = main.load_store()
+        old_item = next(item for item in store["reviews"] if item["id"] == old_review["id"])
+        old_item["created_at"] = (local_midnight_utc - timedelta(minutes=15)).isoformat()
+        main.save_store(store)
+        today_review = self.create_review("Today's campaign", "Today's approved campaign copy.")
+        store = main.load_store()
+        today_item = next(item for item in store["reviews"] if item["id"] == today_review["id"])
+        today_item["created_at"] = (local_midnight_utc + timedelta(minutes=15)).isoformat()
+        main.save_store(store)
+        captured_prompt = {}
+
+        class FakeModels:
+            def generate_content(self, **kwargs: object) -> object:
+                prompt = json.loads(kwargs["contents"])
+                captured_prompt.update(prompt)
+                response = {
+                    "answer": "Today's campaign was reviewed. Its saved content is shown in the cited review.",
+                    "evidence_ids": [f"review_content_{today_review['id']}"],
+                }
+                return type("Response", (), {"text": json.dumps(response)})()
+
+        class FakeClient:
+            def __init__(self, **kwargs: object) -> None:
+                self.models = FakeModels()
+
+        with patch.dict(os.environ, {"GEMINI_API_KEY": "assistant-test-key"}):
+            with patch.object(
+                main,
+                "get_guidelines",
+                return_value=main.Guidelines(brand_name="Northstar"),
+            ):
+                with patch.object(
+                    main.knowledge_base,
+                    "retrieve",
+                    return_value={"status": "empty", "sources": [], "error": None},
+                ):
+                    with patch("google.genai.Client", FakeClient):
+                        response = self.client.post(
+                            "/api/assistant",
+                            json={
+                                "question": "What are today's review contents?",
+                                "local_today": local_today.isoformat(),
+                                "timezone_offset_minutes": -330,
+                            },
+                        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        result = response.json()
+        self.assertTrue(result["evidence_available"])
+        self.assertIn("Today's campaign was reviewed", result["answer"])
+        self.assertEqual(len(result["sources"]), 1)
+        self.assertEqual(result["sources"][0]["source_type"], "review_content")
+        self.assertEqual(result["sources"][0]["excerpt"], "Today's approved campaign copy.")
+        prompt_sources = captured_prompt["evidence"]
+        review_content_sources = [
+            source for source in prompt_sources if source["source_type"] == "review_content"
+        ]
+        self.assertEqual(len(review_content_sources), 1)
+        self.assertIn("Today's campaign", review_content_sources[0]["title"])
+        self.assertNotIn("Previous campaign", review_content_sources[0]["title"])
+
+    def test_brand_assistant_cites_retrieved_document_and_selected_review_findings(self) -> None:
+        review = self.create_review("Campaign draft", "Our products are guaranteed.")
+        self.assertTrue(review["issues"])
+        retrieved_source = {
+            "chunk_id": "guide-chunk-1",
+            "document_id": "guide-1",
+            "filename": "brand-guide.pdf",
+            "page_number": 4,
+            "excerpt": "Avoid unsupported guarantees in public marketing.",
+            "similarity": 0.91,
+        }
+        captured_prompt = {}
+
+        class FakeModels:
+            def generate_content(self, **kwargs: object) -> object:
+                prompt = json.loads(kwargs["contents"])
+                captured_prompt.update(prompt)
+                response = {
+                    "answer": "The reviewed copy uses prohibited wording; the guide says to avoid unsupported guarantees.",
+                    "evidence_ids": ["review_issue_0", "guide-chunk-1", "unknown-source"],
+                }
+                return type("Response", (), {"text": json.dumps(response)})()
+
+        class FakeClient:
+            def __init__(self, **kwargs: object) -> None:
+                self.models = FakeModels()
+
+        with patch.dict(os.environ, {"GEMINI_API_KEY": "assistant-test-key"}):
+            with patch.object(
+                main.knowledge_base,
+                "retrieve",
+                return_value={"status": "retrieved", "sources": [retrieved_source], "error": None},
+            ):
+                with patch("google.genai.Client", FakeClient):
+                    response = self.client.post(
+                        "/api/assistant",
+                        json={
+                            "question": "Why was this campaign flagged?",
+                            "review_id": review["id"],
+                        },
+                    )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        result = response.json()
+        self.assertTrue(result["evidence_available"])
+        self.assertEqual(
+            {source["source_id"] for source in result["sources"]},
+            {"review_issue_0", "guide-chunk-1"},
+        )
+        document = next(source for source in result["sources"] if source["source_type"] == "document")
+        self.assertEqual(document["filename"], "brand-guide.pdf")
+        self.assertEqual(document["page_number"], 4)
+        self.assertIn("review_issue_0", {item["source_id"] for item in captured_prompt["evidence"]})
+        self.assertNotIn("unknown-source", {source["source_id"] for source in result["sources"]})
+
+    def test_brand_assistant_handles_gemini_failure_without_exposing_key(self) -> None:
+        secret = "assistant-test-key"
+
+        class FakeModels:
+            def generate_content(self, **kwargs: object) -> object:
+                raise RuntimeError(f"temporary generation error: {secret}")
+
+        class FakeClient:
+            def __init__(self, **kwargs: object) -> None:
+                self.models = FakeModels()
+
+        output = StringIO()
+        with patch.dict(os.environ, {"GEMINI_API_KEY": secret}):
+            with patch.object(
+                main.knowledge_base,
+                "retrieve",
+                return_value={"status": "empty", "sources": [], "error": None},
+            ):
+                with patch("google.genai.Client", FakeClient):
+                    with redirect_stdout(output):
+                        response = self.client.post(
+                            "/api/assistant",
+                            json={"question": "What terminology should this brand use?"},
+                        )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertNotIn(secret, response.text)
+        self.assertNotIn(secret, output.getvalue())
+        self.assertIn("try again", response.json()["detail"].casefold())
 
 
 if __name__ == "__main__":

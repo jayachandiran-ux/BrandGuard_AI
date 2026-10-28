@@ -12,6 +12,7 @@ BrandGuard AI is a manager-only brand governance workspace created by **Team SYN
 | RAG-Based Brand Guideline Verification | Retrieves page-aware passages from uploaded guideline PDFs to provide evidence for reviews. | Implemented and covered by backend tests for extraction, embeddings, retrieval, citations, and persistence. PDF indexing requires Gemini credentials and network/API availability. |
 | Suggested Content Revision | Shows revised copy when the review engine can provide a safe suggestion. | Partially working. Revisions are checked against extracted claims and numeric details; rule-based fallback preserves the original copy and asks the manager to make changes manually. The checks cannot guarantee semantic equivalence. |
 | Brand DNA Drift and Analytics | Compares draft content with current guidelines and a selected approved review; Reports summarizes saved review data. | Partially working. Drift scoring is based on documented text rules, not a learned brand model or full longitudinal trend analysis. Reports is a basic frontend summary of saved reviews. |
+| AI Brand Assistant | Answers questions using saved guidelines, retrieved PDF passages, and the review currently open in the workspace. | Implemented with backend tests for evidence citations, missing evidence, and Gemini failure. It requires Gemini availability and only returns citations from supplied sources. |
 
 ## Technology stack
 
@@ -39,11 +40,13 @@ backend/
 
 The browser calls the FastAPI service on port `8000`. The API persists manager guidelines and review/version decisions in `backend/data.json`. Uploaded PDF text chunks, metadata, and the FAISS index are stored under `backend/rag_data/`. These are local workspace data and are intentionally excluded from Git. The JSON persistence layer is intended for a local single-manager MVP, not concurrent multi-user or production deployment.
 
+The optional floating Brand Assistant sends questions to `POST /api/assistant`. Its request accepts `question`, an optional `review_id` for the currently open review, and the browser's local date/UTC offset for questions about today's review history. Review-history questions use saved review content, status, findings, and timestamps; guideline questions also use the existing PDF retrieval pipeline. Responses include cited source excerpts and PDF filename/page metadata when applicable. When no review or supporting evidence exists, the assistant says so instead of guessing. Gemini is called only by the backend; the frontend never receives the API key.
+
 ## Requirements
 
 - Python 3.10 or newer
 - Node.js and npm
-- A Gemini API key for Gemini review and PDF embedding/indexing
+- A Gemini API key for Gemini review, the Brand Assistant, and PDF embedding/indexing
 
 ## Installation and configuration
 
@@ -117,6 +120,7 @@ npm run build
 - Reports aggregate reviews available in the local workspace; they are not a separate analytics service or a full historical trend engine.
 - The local JSON store and FAISS index are not a production multi-user database. Back up `backend/data.json` and `backend/rag_data/` locally if you need to preserve workspace data; do not commit them.
 - Gemini calls require valid credentials, network access, model availability, and sufficient API quota.
+- The Brand Assistant reports an error if Gemini is unavailable; this does not disable the existing review, guideline, or history pages.
 
 ## Team
 

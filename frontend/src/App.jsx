@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
 
 const API_URL = (import.meta.env.VITE_API_URL || 'https://brandguard-ai-x0h8.onrender.com').replace(/\/+$/, '')
@@ -40,7 +40,9 @@ async function api(path, options = {}) {
     const detail = Array.isArray(body.detail)
       ? body.detail.map((item) => item.msg || 'Invalid request').join(' ')
       : body.detail
-    throw new Error(detail || `Request failed (${response.status}).`)
+    const error = new Error(detail || `Request failed (${response.status}).`)
+    error.status = response.status
+    throw error
   }
   return body
 }
@@ -60,6 +62,7 @@ function Icon({ name, size = 20 }) {
     download: <><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><path d="m7 10 5 5 5-5m-5 5V3" /></>,
     menu: <><path d="M4 6h16M4 12h16M4 18h16" /></>,
     close: <><path d="m18 6-12 12M6 6l12 12" /></>,
+    chat: <><path d="M20 11.5a7.5 7.5 0 0 1-7.5 7.5H6l-3 2v-6a7.5 7.5 0 1 1 17-3.5Z" /><path d="M8 11h.01M12 11h.01M16 11h.01" /></>,
     spark: <><path d="m12 3 1.9 5.8L20 11l-6.1 2.2L12 19l-1.9-5.8L4 11l6.1-2.2L12 3Z" /><path d="m19 14 1 2 2 1-2 1-1 2-1-2-2-1 2-1 1-2Z" /></>,
     shield: <><path d="M12 22s8-4 8-11V5l-8-3-8 3v6c0 7 8 11 8 11Z" /><path d="m9 12 2 2 4-4" /></>,
   }
@@ -204,8 +207,95 @@ function App() {
         {page === 'reports' && <ReportsPage reviews={reviews} issueTotals={issueTotals} averageScore={averageScore} openReview={openReview} />}
         <footer className="app-footer"><span>BrandGuard AI <span className="footer-dot">·</span> CODEX 48</span><span>Built for thoughtful, consistent communication</span></footer>
       </main>
+      <BrandAssistant reviewId={page === 'review' ? selectedReview?.id : null} />
     </div>
   )
+}
+
+function BrandAssistant({ reviewId }) {
+  const [open, setOpen] = useState(false)
+  const [question, setQuestion] = useState('')
+  const [sending, setSending] = useState(false)
+  const [messages, setMessages] = useState([{
+    id: 'welcome',
+    role: 'assistant',
+    text: 'Ask about saved brand guidance, indexed PDFs, or the review currently open. I’ll cite the evidence I use.',
+    sources: [],
+  }])
+  const messageList = useRef(null)
+
+  useEffect(() => {
+    if (open && messageList.current) messageList.current.scrollTop = messageList.current.scrollHeight
+  }, [open, messages])
+
+  const ask = async (event) => {
+    event.preventDefault()
+    const text = question.trim()
+    if (!text || sending) return
+    const pendingId = `assistant-${Date.now()}`
+    setQuestion('')
+    setSending(true)
+    setMessages((current) => [
+      ...current,
+      { id: `user-${pendingId}`, role: 'user', text },
+      { id: pendingId, role: 'assistant', text: '', sources: [], pending: true },
+    ])
+    try {
+      const now = new Date()
+      const localToday = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+      const response = await api('/api/assistant', {
+        method: 'POST',
+        body: JSON.stringify({
+          question: text,
+          review_id: reviewId || null,
+          local_today: localToday,
+          timezone_offset_minutes: now.getTimezoneOffset(),
+        }),
+      })
+      setMessages((current) => current.map((message) => message.id === pendingId
+        ? { ...message, text: response.answer, sources: response.sources || [], pending: false }
+        : message))
+    } catch (error) {
+      const errorText = error.status === 404
+        ? 'The Brand Assistant endpoint is not available on the backend yet. Please try again after the backend update is deployed.'
+        : error.message
+      setMessages((current) => current.map((message) => message.id === pendingId
+        ? { ...message, text: errorText, pending: false, error: true }
+        : message))
+    } finally {
+      setSending(false)
+    }
+  }
+
+  return <div className="brand-assistant">
+    {open && <section className="assistant-panel" aria-label="Brand assistant chat">
+      <header className="assistant-header">
+        <span className="assistant-mark"><Icon name="spark" size={17} /></span>
+        <div><strong>Brand Assistant</strong><small>Answers grounded in your workspace</small></div>
+        <button className="assistant-close" aria-label="Close brand assistant" onClick={() => setOpen(false)}><Icon name="close" size={17} /></button>
+      </header>
+      <div className="assistant-messages" ref={messageList} aria-live="polite">
+        {messages.map((message) => <article className={`assistant-message ${message.role} ${message.error ? 'error' : ''}`} key={message.id}>
+          <p>{message.pending ? <span className="assistant-typing">Checking your saved evidence…</span> : message.text}</p>
+          {message.sources?.length > 0 && <div className="assistant-sources"><strong>Sources</strong>{message.sources.map((source) => <div className="assistant-source" key={source.source_id}>
+            <span>{source.filename ? `${source.filename} · page ${source.page_number}` : source.title}</span>
+            {source.source_type === 'review_content'
+              ? <details><summary>View saved content</summary><small>{source.excerpt}</small></details>
+              : <small>{source.excerpt}</small>}
+          </div>)}</div>}
+        </article>)}
+      </div>
+      <form className="assistant-form" onSubmit={ask}>
+        <textarea aria-label="Ask the Brand Assistant" rows={2} maxLength={2000} value={question} onChange={(event) => setQuestion(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit() } }} placeholder="Ask about your brand…" />
+        <button className="button button-primary" type="submit" disabled={sending || !question.trim()} aria-label={sending ? 'Sending question' : 'Send question'}><Icon name="arrow" size={17} /></button>
+      </form>
+      <p className="assistant-disclaimer">The assistant won’t guess when supporting evidence is missing.</p>
+    </section>}
+    <button className={`assistant-toggle ${open ? 'open' : ''}`} aria-label={open ? 'Close Brand Assistant' : 'Open Brand Assistant'} aria-expanded={open} onClick={() => setOpen((current) => !current)}>
+      <Icon name={open ? 'close' : 'chat'} size={21} />
+      <span>{open ? 'Close' : 'Ask brand assistant'}</span>
+    </button>
+  </div>
 }
 
 function Dashboard({ reviews, pendingCount, approvedCount, issueCount, navigate, openReview }) {
