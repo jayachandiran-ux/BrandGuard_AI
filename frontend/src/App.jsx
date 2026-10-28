@@ -235,7 +235,7 @@ function App() {
       </aside>
 
       <main className="main-area">
-        <header className="topbar"><button className="mobile-menu" aria-label="Open navigation" onClick={() => setMobileNav(true)}><Icon name="menu" /></button><div className="breadcrumb">Workspace <span>/</span> <strong>{NAV_ITEMS.find((item) => item.id === page)?.label || 'Content review'}</strong></div><div className="topbar-right"><button className="change-name-topbar" onClick={changeDisplayName}>Change name</button><span className="team-pill"><span /> SYNAPSE</span><span className="top-avatar">{displayName.charAt(0).toUpperCase()}</span></div></header>
+        <header className="topbar"><button className="mobile-menu" aria-label="Open navigation" onClick={() => setMobileNav(true)}><Icon name="menu" /></button><div className="breadcrumb">Workspace <span>/</span> <strong>{NAV_ITEMS.find((item) => item.id === page)?.label || 'Content review'}</strong></div><div className="topbar-right"><button className="change-name-topbar" onClick={changeDisplayName}>Change name</button><span className="team-pill"><span /> {displayName}</span><span className="top-avatar">{displayName.charAt(0).toUpperCase()}</span></div></header>
         {nameError && <div className="name-storage-error" role="alert">{nameError}</div>}
         {backendError && <div className="global-alert" role="alert"><Icon name="alert" size={18} /><span>{backendError}</span><button className="retry-button" onClick={refresh} disabled={loading}>{loading ? 'Checking…' : 'Retry connection'}</button></div>}
         {notice && <div className="global-notice" role="status"><Icon name="check" size={18} />{notice}<button aria-label="Dismiss message" onClick={() => setNotice('')}>×</button></div>}
