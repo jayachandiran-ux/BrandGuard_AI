@@ -445,6 +445,36 @@ print(json.dumps(kb.retrieve("warm and clear voice")))
             "http://127.0.0.1:5173",
         )
 
+    def test_cors_allows_deployed_frontend_and_local_origins_only(self) -> None:
+        for origin in (
+            "https://brandguard-ai-1-kry3.onrender.com",
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+        ):
+            with self.subTest(origin=origin):
+                response = self.client.options(
+                    "/api/reviews",
+                    headers={
+                        "Origin": origin,
+                        "Access-Control-Request-Method": "POST",
+                        "Access-Control-Request-Headers": "content-type",
+                    },
+                )
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(
+                    response.headers["access-control-allow-origin"],
+                    origin,
+                )
+
+        rejected = self.client.options(
+            "/api/reviews",
+            headers={
+                "Origin": "https://untrusted.example",
+                "Access-Control-Request-Method": "POST",
+            },
+        )
+        self.assertEqual(rejected.status_code, 400)
+
 
 if __name__ == "__main__":
     unittest.main()

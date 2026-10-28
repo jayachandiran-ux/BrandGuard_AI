@@ -757,9 +757,20 @@ def gemini_review(
 
 
 app = FastAPI(title="BrandGuard AI API", version="1.0.0")
+configured_cors_origins = [
+    origin.strip().rstrip("/")
+    for origin in os.getenv("CORS_ORIGINS", "").split(",")
+    if origin.strip() and origin.strip() != "*"
+]
+allowed_cors_origins = list(dict.fromkeys([
+    "https://brandguard-ai-1-kry3.onrender.com",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    *configured_cors_origins,
+]))
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=os.getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(","),
+    allow_origins=allowed_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

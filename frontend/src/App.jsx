@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import './App.css'
 
-const API_URL = (import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000').replace(/\/+$/, '')
+const API_URL = (import.meta.env.VITE_API_URL || 'https://brandguard-ai-x0h8.onrender.com').replace(/\/+$/, '')
 const TODAY_LABEL = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }).toUpperCase()
 const NAV_ITEMS = [
   { id: 'dashboard', label: 'Dashboard', icon: 'grid' },
