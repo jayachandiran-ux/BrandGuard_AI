@@ -1,14 +1,14 @@
 import json
+import logging
 import os
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from contextlib import redirect_stdout
-from io import StringIO
 from unittest.mock import patch
 
 import numpy as np
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 import main
@@ -362,10 +362,12 @@ class ProductFeatureTests(unittest.TestCase):
         self.assertFalse(captured_prompt["workspace_question"])
         self.assertEqual(captured_prompt["evidence"], [])
         self.assertEqual(client_options["http_options"].timeout, 15000)
+        self.assertEqual(client_options["http_options"].retry_options.attempts, 2)
         retrieve.assert_not_called()
 
     def test_brand_assistant_retrieves_saved_guidance_for_brand_questions(self) -> None:
         captured_prompt = {}
+        client_options = {}
 
         class FakeModels:
             def generate_content(self, **kwargs: object) -> object:
@@ -379,6 +381,7 @@ class ProductFeatureTests(unittest.TestCase):
 
         class FakeClient:
             def __init__(self, **kwargs: object) -> None:
+                client_options.update(kwargs)
                 self.models = FakeModels()
 
         with patch.dict(os.environ, {"GEMINI_API_KEY": "assistant-test-key"}):
@@ -682,6 +685,163 @@ class ProductFeatureTests(unittest.TestCase):
         self.assertIn("Today's campaign", review_content_sources[0]["title"])
         self.assertNotIn("Previous campaign", review_content_sources[0]["title"])
 
+    def test_brand_assistant_answers_project_review_metrics_from_saved_data(self) -> None:
+        first = self.create_review("Most findings", "Our guaranteed product is the best.")
+        pending = self.create_review("Pending campaign", "Our guaranteed product helps.")
+        latest = self.create_review("Old rejected", "Our guaranteed product works.")
+        local_today = (datetime.now(timezone.utc) + timedelta(minutes=330)).date()
+        local_timezone = timezone(timedelta(minutes=330))
+        local_midnight_utc = (
+            datetime.combine(local_today, datetime.min.time(), timezone.utc)
+            - timedelta(minutes=330)
+        )
+        store = main.load_store()
+        records = {review["id"]: review for review in store["reviews"]}
+        issue = records[first["id"]]["issues"][0]
+        records[first["id"]].update({
+            "status": "Approved",
+            "score": 42,
+            "created_at": (local_midnight_utc + timedelta(minutes=30)).isoformat(),
+            "issues": [issue, issue],
+        })
+        records[pending["id"]].update({
+            "status": "Pending",
+            "score": 75,
+            "created_at": (local_midnight_utc + timedelta(minutes=60)).isoformat(),
+            "issues": [issue],
+        })
+        records[latest["id"]].update({
+            "status": "Rejected",
+            "score": 93,
+            "created_at": (local_midnight_utc - timedelta(days=1)).isoformat(),
+            "issues": [],
+        })
+        main.save_store(store)
+
+        generations = []
+
+        class FakeModels:
+            def generate_content(self, **kwargs: object) -> object:
+                prompt = json.loads(kwargs["contents"])
+                generations.append(prompt)
+                source_ids = [source["source_id"] for source in prompt["evidence"]]
+                response = {
+                    "answer": "Here is the saved BrandGuard workspace information.",
+                    "evidence_ids": source_ids,
+                }
+                return type("Response", (), {"text": json.dumps(response)})()
+
+        class FakeClient:
+            def __init__(self, **kwargs: object) -> None:
+                self.models = FakeModels()
+
+        questions = [
+            "What is the content review status?",
+            "How many reviews were completed today?",
+            "Show pending reviews.",
+            "Summarise the latest review.",
+            "What is the average compliance score?",
+            "Which content has the most brand issues?",
+            "What features are currently implemented?",
+            "What are the known problems in our application?",
+            "What should we improve next?",
+        ]
+        with patch.dict(os.environ, {"GEMINI_API_KEY": "assistant-test-key"}):
+            with patch.object(
+                main.knowledge_base,
+                "retrieve",
+                return_value={"status": "empty", "sources": [], "error": None},
+            ):
+                with patch("google.genai.Client", FakeClient):
+                    for question in questions:
+                        with self.subTest(question=question):
+                            response = self.client.post(
+                                "/api/assistant",
+                                json={
+                                    "question": question,
+                                    "local_today": local_today.isoformat(),
+                                    "timezone_offset_minutes": -330,
+                                },
+                            )
+                            self.assertEqual(response.status_code, 200, response.text)
+                            result = response.json()
+                            self.assertTrue(result["evidence_available"])
+                            self.assertTrue(result["sources"])
+
+        review_prompts = generations[:6]
+        self.assertEqual(len(review_prompts), 6)
+        summary = json.loads(next(
+            source["excerpt"]
+            for source in review_prompts[0]["evidence"]
+            if source["source_id"] == "review_workspace_summary"
+        ))
+        self.assertEqual(summary["total_saved_reviews"], 3)
+        self.assertEqual(summary["reviews_created_today"], 2)
+        self.assertIsNone(summary["reviews_completed"])
+        self.assertIn("no completed status", summary["completion_count_unavailable_reason"])
+        self.assertEqual(summary["today_status_counts"], {
+            "Pending": 1,
+            "Approved": 1,
+            "Rejected": 0,
+        })
+        self.assertEqual(summary["all_time_status_counts"], {
+            "Pending": 1,
+            "Approved": 1,
+            "Rejected": 1,
+        })
+        self.assertEqual(summary["average_compliance_score"], 70)
+        self.assertEqual(summary["total_findings"], 3)
+        self.assertEqual(summary["review_with_most_findings"], {
+            "title": "Most findings",
+            "finding_count": 2,
+        })
+        self.assertIn("no separate completion timestamp", " ".join(summary["data_notes"]))
+
+        pending_sources = review_prompts[2]["evidence"]
+        pending_reviews = [
+            source for source in pending_sources
+            if source["source_type"] == "review_content"
+        ]
+        self.assertEqual(len(pending_reviews), 1)
+        self.assertIn("Pending campaign", pending_reviews[0]["title"])
+        latest_sources = review_prompts[3]["evidence"]
+        latest_review = next(
+            source for source in latest_sources
+            if source["source_type"] == "review_content"
+        )
+        self.assertIn("Pending campaign", latest_review["title"])
+        for project_prompt in generations[6:]:
+            project_doc = next(
+                source for source in project_prompt["evidence"]
+                if source["source_id"] == "project_maturity_readme"
+            )
+            self.assertIn("Partially working", project_doc["excerpt"])
+
+    def test_brand_assistant_handles_empty_review_data_with_real_zero_summary(self) -> None:
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("GEMINI_API_KEY", None)
+            response = self.client.post(
+                "/api/assistant",
+                json={"question": "Show pending reviews."},
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["answer"], "There are no saved reviews yet.")
+        self.assertFalse(response.json()["evidence_available"])
+
+    def test_brand_assistant_does_not_turn_review_store_failure_into_zero(self) -> None:
+        with patch(
+            "main.list_reviews",
+            side_effect=HTTPException(status_code=500, detail="Could not read local data store."),
+        ):
+            response = self.client.post(
+                "/api/assistant",
+                json={"question": "Show pending reviews."},
+            )
+
+        self.assertEqual(response.status_code, 500)
+        self.assertIn("Could not read local data store", response.json()["detail"])
+
     def test_brand_assistant_cites_retrieved_document_and_selected_review_findings(self) -> None:
         review = self.create_review("Campaign draft", "Our products are guaranteed.")
         self.assertTrue(review["issues"])
@@ -748,7 +908,6 @@ class ProductFeatureTests(unittest.TestCase):
             def __init__(self, **kwargs: object) -> None:
                 self.models = FakeModels()
 
-        output = StringIO()
         with patch.dict(os.environ, {"GEMINI_API_KEY": secret}):
             with patch.object(
                 main.knowledge_base,
@@ -756,16 +915,101 @@ class ProductFeatureTests(unittest.TestCase):
                 return_value={"status": "empty", "sources": [], "error": None},
             ):
                 with patch("google.genai.Client", FakeClient):
-                    with redirect_stdout(output):
+                    with self.assertLogs("main", level=logging.ERROR) as captured:
                         response = self.client.post(
                             "/api/assistant",
-                            json={"question": "What terminology should this brand use?"},
+                            json={"question": "Explain AI in simple terms."},
                         )
 
-        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.status_code, 502)
         self.assertNotIn(secret, response.text)
-        self.assertNotIn(secret, output.getvalue())
+        self.assertNotIn(secret, "\n".join(captured.output))
         self.assertIn("try again", response.json()["detail"].casefold())
+
+    def test_brand_assistant_maps_gemini_provider_errors_safely(self) -> None:
+        from google.genai import errors
+
+        cases = [
+            (
+                errors.ServerError(
+                    503,
+                    {"error": {"message": "temporary capacity issue", "status": "UNAVAILABLE"}},
+                ),
+                503,
+                "provider_unavailable",
+                "temporarily unavailable",
+            ),
+            (
+                errors.ClientError(
+                    429,
+                    {"error": {"message": "quota exceeded", "status": "RESOURCE_EXHAUSTED"}},
+                ),
+                503,
+                "quota_or_rate_limit",
+                "quota",
+            ),
+            (
+                errors.ClientError(
+                    401,
+                    {"error": {"message": "invalid credential", "status": "UNAUTHENTICATED"}},
+                ),
+                503,
+                "authentication_or_permission",
+                "credentials",
+            ),
+            (
+                errors.ClientError(
+                    404,
+                    {"error": {"message": "unknown model", "status": "NOT_FOUND"}},
+                ),
+                503,
+                "model_unavailable",
+                "GEMINI_MODEL",
+            ),
+        ]
+        for error, expected_status, expected_category, detail_marker in cases:
+            with self.subTest(category=expected_category):
+                status, category, detail = main.assistant_generation_error(error)
+                self.assertEqual(status, expected_status)
+                self.assertEqual(category, expected_category)
+                self.assertIn(detail_marker.casefold(), detail.casefold())
+
+    def test_brand_assistant_returns_saved_workspace_metrics_during_gemini_quota_failure(self) -> None:
+        from google.genai import errors
+
+        review = self.create_review("Quota test review", "Our guaranteed product helps.")
+        stored = main.load_store()
+        item = next(candidate for candidate in stored["reviews"] if candidate["id"] == review["id"])
+        item["score"] = 73
+        main.save_store(stored)
+
+        class FakeModels:
+            def generate_content(self, **kwargs: object) -> object:
+                raise errors.ClientError(
+                    429,
+                    {"error": {"message": "quota exceeded", "status": "RESOURCE_EXHAUSTED"}},
+                )
+
+        class FakeClient:
+            def __init__(self, **kwargs: object) -> None:
+                self.models = FakeModels()
+
+        with patch.dict(os.environ, {"GEMINI_API_KEY": "assistant-test-key"}):
+            with patch("google.genai.Client", FakeClient):
+                response = self.client.post(
+                    "/api/assistant",
+                    json={"question": "What is the average compliance score?"},
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        result = response.json()
+        self.assertIn("average compliance score: 73.0/100", result["answer"].casefold())
+        self.assertIn("quota", result["answer"].casefold())
+        self.assertTrue(result["evidence_available"])
+        self.assertTrue(any(
+            source["source_id"] == "review_workspace_summary"
+            for source in result["sources"]
+        ))
 
 
 if __name__ == "__main__":
