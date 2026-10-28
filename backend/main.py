@@ -825,6 +825,8 @@ allowed_cors_origins = list(dict.fromkeys([
     "https://brandguard-ai-1-kry3.onrender.com",
     "http://localhost:5173",
     "http://127.0.0.1:5173",
+    "http://localhost:5174",
+    "http://127.0.0.1:5174",
     *configured_cors_origins,
 ]))
 app.add_middleware(
