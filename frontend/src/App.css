@@ -1043,7 +1043,9 @@ select:focus-visible, a:focus-visible, [tabindex]:focus-visible {
 .assistant-message.user { align-self: flex-end; border-color: #DED8FF; border-radius: 12px 12px 4px 12px; background: var(--lavender-soft); }
 .assistant-message.error { border-color: #F0D8DA; background: #FFF4F3; }
 .assistant-message p { margin: 0; color: var(--text); font-size: 12px; line-height: 1.55; overflow-wrap: anywhere; white-space: pre-wrap; }
-.assistant-typing { color: var(--muted); }
+.assistant-typing { display: inline-flex; align-items: center; gap: 7px; color: var(--muted); }
+.assistant-typing::before { width: 9px; height: 9px; border: 1.5px solid #B7A4FF; border-right-color: transparent; border-radius: 50%; content: ""; animation: assistant-spin .8s linear infinite; }
+@keyframes assistant-spin { to { transform: rotate(360deg); } }
 .assistant-sources { display: grid; gap: 7px; margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border); }
 .assistant-sources > strong { color: var(--accent); font-size: 9px; letter-spacing: .5px; text-transform: uppercase; }
 .assistant-source { display: grid; gap: 2px; min-width: 0; }
@@ -1064,6 +1066,7 @@ select:focus-visible, a:focus-visible, [tabindex]:focus-visible {
 }
 @media (prefers-reduced-motion: reduce) {
   .assistant-toggle { transition: none; }
+  .assistant-typing::before { animation: none; }
 }
 
 :root, body, #root, .app-shell { color: var(--text); background: var(--background); }

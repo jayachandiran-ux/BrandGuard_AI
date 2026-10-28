@@ -219,7 +219,7 @@ function BrandAssistant({ reviewId }) {
   const [messages, setMessages] = useState([{
     id: 'welcome',
     role: 'assistant',
-    text: 'Ask about saved brand guidance, indexed PDFs, or the review currently open. I’ll cite the evidence I use.',
+    text: 'Hi! Ask me anything—from general questions and writing help to your brand guidelines and review history.',
     sources: [],
   }])
   const messageList = useRef(null)
@@ -250,6 +250,10 @@ function BrandAssistant({ reviewId }) {
           review_id: reviewId || null,
           local_today: localToday,
           timezone_offset_minutes: now.getTimezoneOffset(),
+          history: messages
+            .filter((message) => message.id !== 'welcome' && !message.pending && !message.error)
+            .slice(-10)
+            .map(({ role, text: messageText }) => ({ role, text: messageText.slice(0, 1800) })),
         }),
       })
       setMessages((current) => current.map((message) => message.id === pendingId
@@ -271,12 +275,12 @@ function BrandAssistant({ reviewId }) {
     {open && <section className="assistant-panel" aria-label="Brand assistant chat">
       <header className="assistant-header">
         <span className="assistant-mark"><Icon name="spark" size={17} /></span>
-        <div><strong>Brand Assistant</strong><small>Answers grounded in your workspace</small></div>
+        <div><strong>Brand Assistant</strong><small>Gemini chat with brand context</small></div>
         <button className="assistant-close" aria-label="Close brand assistant" onClick={() => setOpen(false)}><Icon name="close" size={17} /></button>
       </header>
       <div className="assistant-messages" ref={messageList} aria-live="polite">
         {messages.map((message) => <article className={`assistant-message ${message.role} ${message.error ? 'error' : ''}`} key={message.id}>
-          <p>{message.pending ? <span className="assistant-typing">Checking your saved evidence…</span> : message.text}</p>
+          <p>{message.pending ? <span className="assistant-typing">Thinking…</span> : message.text}</p>
           {message.sources?.length > 0 && <div className="assistant-sources"><strong>Sources</strong>{message.sources.map((source) => <div className="assistant-source" key={source.source_id}>
             <span>{source.filename ? `${source.filename} · page ${source.page_number}` : source.title}</span>
             {source.source_type === 'review_content'
@@ -286,10 +290,10 @@ function BrandAssistant({ reviewId }) {
         </article>)}
       </div>
       <form className="assistant-form" onSubmit={ask}>
-        <textarea aria-label="Ask the Brand Assistant" rows={2} maxLength={2000} value={question} onChange={(event) => setQuestion(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit() } }} placeholder="Ask about your brand…" />
+        <textarea aria-label="Ask the Brand Assistant" rows={2} maxLength={2000} value={question} onChange={(event) => setQuestion(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit() } }} placeholder="Ask anything…" />
         <button className="button button-primary" type="submit" disabled={sending || !question.trim()} aria-label={sending ? 'Sending question' : 'Send question'}><Icon name="arrow" size={17} /></button>
       </form>
-      <p className="assistant-disclaimer">The assistant won’t guess when supporting evidence is missing.</p>
+      <p className="assistant-disclaimer">Brand and review answers use saved workspace evidence; general answers come from Gemini.</p>
     </section>}
     <button className={`assistant-toggle ${open ? 'open' : ''}`} aria-label={open ? 'Close Brand Assistant' : 'Open Brand Assistant'} aria-expanded={open} onClick={() => setOpen((current) => !current)}>
       <Icon name={open ? 'close' : 'chat'} size={21} />

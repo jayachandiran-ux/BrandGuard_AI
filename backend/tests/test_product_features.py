@@ -313,27 +313,252 @@ class ProductFeatureTests(unittest.TestCase):
         self.assertEqual(persisted[revision["id"]]["content"], "Members enjoy practical design.")
         self.assertEqual(persisted[revision["id"]]["version_number"], 2)
 
-    def test_brand_assistant_returns_clear_answer_when_no_evidence_exists(self) -> None:
+    def test_brand_assistant_sends_general_questions_to_gemini_without_workspace_evidence(self) -> None:
+        captured_prompt = {}
+        client_options = {}
+
+        class FakeModels:
+            def generate_content(self, **kwargs: object) -> object:
+                captured_prompt.update(json.loads(kwargs["contents"]))
+                return type("Response", (), {
+                    "text": json.dumps({
+                        "answer": "Machine learning lets computers learn patterns from examples.",
+                        "evidence_ids": [],
+                    }),
+                })()
+
+        class FakeClient:
+            def __init__(self, **kwargs: object) -> None:
+                client_options.update(kwargs)
+                self.models = FakeModels()
+
         with patch.object(
             main,
             "get_guidelines",
             return_value=main.Guidelines(brand_name="Northstar"),
         ):
+            with patch.object(main, "list_reviews", return_value=[]):
+                retrieval = patch.object(
+                    main.knowledge_base,
+                    "retrieve",
+                    return_value={"status": "empty", "sources": [], "error": None},
+                )
+                with retrieval as retrieve:
+                    with patch.dict(os.environ, {"GEMINI_API_KEY": "assistant-test-key"}):
+                        with patch("google.genai.Client", FakeClient):
+                            response = self.client.post(
+                                "/api/assistant",
+                                json={"question": "Explain machine learning in simple terms."},
+                            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        result = response.json()
+        self.assertEqual(
+            result["answer"],
+            "Machine learning lets computers learn patterns from examples.",
+        )
+        self.assertFalse(result["evidence_available"])
+        self.assertEqual(result["sources"], [])
+        self.assertFalse(captured_prompt["workspace_question"])
+        self.assertEqual(captured_prompt["evidence"], [])
+        self.assertEqual(client_options["http_options"].timeout, 15000)
+        retrieve.assert_not_called()
+
+    def test_brand_assistant_retrieves_saved_guidance_for_brand_questions(self) -> None:
+        captured_prompt = {}
+
+        class FakeModels:
+            def generate_content(self, **kwargs: object) -> object:
+                captured_prompt.update(json.loads(kwargs["contents"]))
+                return type("Response", (), {
+                    "text": json.dumps({
+                        "answer": "Use “members” as the preferred term.",
+                        "evidence_ids": ["guideline_preferred_terms"],
+                    }),
+                })()
+
+        class FakeClient:
+            def __init__(self, **kwargs: object) -> None:
+                self.models = FakeModels()
+
+        with patch.dict(os.environ, {"GEMINI_API_KEY": "assistant-test-key"}):
             with patch.object(
                 main.knowledge_base,
                 "retrieve",
                 return_value={"status": "empty", "sources": [], "error": None},
-            ):
+            ) as retrieve:
+                with patch("google.genai.Client", FakeClient):
+                    response = self.client.post(
+                        "/api/assistant",
+                        json={"question": "What are our preferred brand terms?"},
+                    )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        result = response.json()
+        self.assertTrue(result["evidence_available"])
+        self.assertEqual(result["sources"][0]["source_type"], "guideline")
+        self.assertIn("members", result["sources"][0]["excerpt"])
+        self.assertTrue(captured_prompt["workspace_question"])
+        retrieve.assert_called_once_with("What are our preferred brand terms?")
+
+    def test_brand_assistant_uses_saved_voice_guidance_for_rewriting(self) -> None:
+        captured_prompt = {}
+
+        class FakeModels:
+            def generate_content(self, **kwargs: object) -> object:
+                captured_prompt.update(json.loads(kwargs["contents"]))
+                return type("Response", (), {
+                    "text": json.dumps({
+                        "answer": "Here is a clearer version in the saved warm, practical voice.",
+                        "evidence_ids": ["guideline_voice"],
+                    }),
+                })()
+
+        class FakeClient:
+            def __init__(self, **kwargs: object) -> None:
+                self.models = FakeModels()
+
+        with patch.dict(os.environ, {"GEMINI_API_KEY": "assistant-test-key"}):
+            with patch.object(
+                main.knowledge_base,
+                "retrieve",
+                return_value={"status": "empty", "sources": [], "error": None},
+            ) as retrieve:
+                with patch("google.genai.Client", FakeClient):
+                    response = self.client.post(
+                        "/api/assistant",
+                        json={"question": "Rewrite this copy to be clearer: The product is good."},
+                    )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertTrue(response.json()["evidence_available"])
+        self.assertEqual(response.json()["sources"][0]["source_type"], "guideline")
+        self.assertTrue(captured_prompt["writing_request"])
+        self.assertFalse(captured_prompt["workspace_question"])
+        retrieve.assert_called_once()
+
+    def test_brand_assistant_includes_recent_turns_for_follow_up_questions(self) -> None:
+        captured_prompt = {}
+
+        class FakeModels:
+            def generate_content(self, **kwargs: object) -> object:
+                captured_prompt.update(json.loads(kwargs["contents"]))
+                return type("Response", (), {
+                    "text": json.dumps({
+                        "answer": "In short, it learns patterns from examples.",
+                        "evidence_ids": [],
+                    }),
+                })()
+
+        class FakeClient:
+            def __init__(self, **kwargs: object) -> None:
+                self.models = FakeModels()
+
+        with patch.dict(os.environ, {"GEMINI_API_KEY": "assistant-test-key"}):
+            with patch("google.genai.Client", FakeClient):
                 response = self.client.post(
                     "/api/assistant",
-                    json={"question": "Which rule applies to this unrelated question?"},
+                    json={
+                        "question": "Can you make that shorter?",
+                        "history": [
+                            {"role": "user", "text": "Explain machine learning simply."},
+                            {
+                                "role": "assistant",
+                                "text": "Machine learning finds patterns in examples and uses them to make predictions.",
+                            },
+                        ],
+                    },
                 )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(
+            captured_prompt["conversation_history"],
+            [
+                {"role": "user", "text": "Explain machine learning simply."},
+                {
+                    "role": "assistant",
+                    "text": "Machine learning finds patterns in examples and uses them to make predictions.",
+                },
+            ],
+        )
+        self.assertEqual(response.json()["answer"], "In short, it learns patterns from examples.")
+
+    def test_brand_assistant_uses_workspace_context_for_brand_follow_ups(self) -> None:
+        captured_prompt = {}
+
+        class FakeModels:
+            def generate_content(self, **kwargs: object) -> object:
+                captured_prompt.update(json.loads(kwargs["contents"]))
+                return type("Response", (), {
+                    "text": json.dumps({
+                        "answer": "Use the preferred term naturally when it accurately describes the audience.",
+                        "evidence_ids": ["guideline_preferred_terms"],
+                    }),
+                })()
+
+        class FakeClient:
+            def __init__(self, **kwargs: object) -> None:
+                self.models = FakeModels()
+
+        question = "What are our preferred brand terms?"
+        with patch.dict(os.environ, {"GEMINI_API_KEY": "assistant-test-key"}):
+            with patch.object(
+                main.knowledge_base,
+                "retrieve",
+                return_value={"status": "empty", "sources": [], "error": None},
+            ) as retrieve:
+                with patch("google.genai.Client", FakeClient):
+                    response = self.client.post(
+                        "/api/assistant",
+                        json={
+                            "question": "How should we use them?",
+                            "history": [{"role": "user", "text": question}],
+                        },
+                    )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertTrue(response.json()["evidence_available"])
+        self.assertEqual(response.json()["sources"][0]["source_type"], "guideline")
+        self.assertTrue(captured_prompt["workspace_question"])
+        retrieve.assert_called_once()
+        self.assertIn(question, retrieve.call_args.args[0])
+
+    def test_brand_assistant_refuses_to_guess_when_brand_evidence_is_missing(self) -> None:
+        class FakeModels:
+            def generate_content(self, **kwargs: object) -> object:
+                return type("Response", (), {
+                    "text": json.dumps({
+                        "answer": "The preferred term is unavailable.",
+                        "evidence_ids": [],
+                    }),
+                })()
+
+        class FakeClient:
+            def __init__(self, **kwargs: object) -> None:
+                self.models = FakeModels()
+
+        with patch.dict(os.environ, {"GEMINI_API_KEY": "assistant-test-key"}):
+            with patch.object(
+                main,
+                "get_guidelines",
+                return_value=main.Guidelines(brand_name="Northstar"),
+            ):
+                with patch.object(
+                    main.knowledge_base,
+                    "retrieve",
+                    return_value={"status": "empty", "sources": [], "error": None},
+                ):
+                    with patch("google.genai.Client", FakeClient):
+                        response = self.client.post(
+                            "/api/assistant",
+                            json={"question": "What are our preferred brand terms?"},
+                        )
 
         self.assertEqual(response.status_code, 200, response.text)
         result = response.json()
         self.assertFalse(result["evidence_available"])
         self.assertEqual(result["sources"], [])
-        self.assertIn("couldn't find", result["answer"].casefold())
+        self.assertIn("couldn't verify", result["answer"].casefold())
 
     def test_brand_assistant_reports_no_saved_reviews_for_today(self) -> None:
         with patch.object(
