@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
 
 const API_URL = (import.meta.env.VITE_API_URL || 'https://brandguard-ai-x0h8.onrender.com').replace(/\/+$/, '')
+const DISPLAY_NAME_STORAGE_KEY = 'brandguard-display-name'
 const TODAY_LABEL = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }).toUpperCase()
 const NAV_ITEMS = [
   { id: 'dashboard', label: 'Dashboard', icon: 'grid' },
@@ -19,6 +20,14 @@ const EMPTY_GUIDELINES = {
   approved_facts: [],
   instructions: '',
   is_sample: false,
+}
+
+function getSavedDisplayName() {
+  try {
+    return window.localStorage.getItem(DISPLAY_NAME_STORAGE_KEY)?.trim() || ''
+  } catch {
+    return ''
+  }
 }
 
 async function api(path, options = {}) {
@@ -89,6 +98,8 @@ function FieldList({ id, value, onChange, placeholder }) {
 
 function App() {
   const [page, setPage] = useState('dashboard')
+  const [displayName, setDisplayName] = useState(getSavedDisplayName)
+  const [nameError, setNameError] = useState('')
   const [reviews, setReviews] = useState([])
   const [guidelines, setGuidelines] = useState(EMPTY_GUIDELINES)
   const [documentState, setDocumentState] = useState({ status: 'empty', documents: [], chunk_count: 0 })
@@ -120,6 +131,10 @@ function App() {
   }, [fetchWorkspace])
 
   useEffect(() => {
+    if (!displayName) {
+      return undefined
+    }
+
     let active = true
     fetchWorkspace()
       .then(([savedGuidelines, savedReviews, savedDocuments]) => {
@@ -137,8 +152,29 @@ function App() {
         if (active) setLoading(false)
       })
     return () => { active = false }
-  }, [fetchWorkspace])
+  }, [fetchWorkspace, displayName])
 
+  const saveDisplayName = (name) => {
+    try {
+      window.localStorage.setItem(DISPLAY_NAME_STORAGE_KEY, name)
+      setNameError('')
+      setLoading(true)
+      setDisplayName(name)
+      return true
+    } catch {
+      setNameError('Your browser could not save your name. Please check your browser storage settings and try again.')
+      return false
+    }
+  }
+  const changeDisplayName = () => {
+    try {
+      window.localStorage.removeItem(DISPLAY_NAME_STORAGE_KEY)
+      setNameError('')
+      setDisplayName('')
+    } catch {
+      setNameError('Your browser could not update the saved name. Please check your browser storage settings and try again.')
+    }
+  }
   const pendingCount = reviews.filter((review) => review.status === 'Pending').length
   const approvedCount = reviews.filter((review) => review.status === 'Approved').length
   const issueCount = reviews.reduce((total, review) => total + review.issues.length, 0)
@@ -179,6 +215,10 @@ function App() {
     return totals
   }, { High: 0, Medium: 0, Low: 0 }), [reviews])
 
+  if (!displayName) {
+    return <WelcomePage onContinue={saveDisplayName} error={nameError} />
+  }
+
   return (
     <div className="app-shell">
       {mobileNav && <button className="mobile-backdrop" aria-label="Close navigation" onClick={() => setMobileNav(false)} />}
@@ -190,16 +230,17 @@ function App() {
         </nav>
         <div className="sidebar-bottom">
           <div className="help-card"><span className="help-icon"><Icon name="spark" size={18} /></span><strong>Keep your brand on point</strong><p>Review every message before it reaches your audience.</p><button onClick={() => navigate('review')}>Start a review <Icon name="arrow" size={15} /></button></div>
-          <div className="user-profile"><div className="avatar">S</div><div><strong>SYNAPSE</strong><small>CODEX 48 workspace</small></div><span className="online-dot" /></div>
+          <div className="user-profile"><div className="avatar">{displayName.charAt(0).toUpperCase()}</div><div className="user-profile-details"><strong>{displayName}</strong><small>CODEX 48 workspace</small></div><span className="online-dot" /></div>
         </div>
       </aside>
 
       <main className="main-area">
-        <header className="topbar"><button className="mobile-menu" aria-label="Open navigation" onClick={() => setMobileNav(true)}><Icon name="menu" /></button><div className="breadcrumb">Workspace <span>/</span> <strong>{NAV_ITEMS.find((item) => item.id === page)?.label || 'Content review'}</strong></div><div className="topbar-right"><span className="team-pill"><span /> SYNAPSE</span><span className="top-avatar">S</span></div></header>
+        <header className="topbar"><button className="mobile-menu" aria-label="Open navigation" onClick={() => setMobileNav(true)}><Icon name="menu" /></button><div className="breadcrumb">Workspace <span>/</span> <strong>{NAV_ITEMS.find((item) => item.id === page)?.label || 'Content review'}</strong></div><div className="topbar-right"><button className="change-name-topbar" onClick={changeDisplayName}>Change name</button><span className="team-pill"><span /> SYNAPSE</span><span className="top-avatar">{displayName.charAt(0).toUpperCase()}</span></div></header>
+        {nameError && <div className="name-storage-error" role="alert">{nameError}</div>}
         {backendError && <div className="global-alert" role="alert"><Icon name="alert" size={18} /><span>{backendError}</span><button className="retry-button" onClick={refresh} disabled={loading}>{loading ? 'Checking…' : 'Retry connection'}</button></div>}
         {notice && <div className="global-notice" role="status"><Icon name="check" size={18} />{notice}<button aria-label="Dismiss message" onClick={() => setNotice('')}>×</button></div>}
         {loading && <div className="loading-strip"><span /> Connecting to your workspace…</div>}
-        {page === 'dashboard' && <Dashboard reviews={reviews} pendingCount={pendingCount} approvedCount={approvedCount} issueCount={issueCount} navigate={navigate} openReview={openReview} />}
+        {page === 'dashboard' && <Dashboard reviews={reviews} pendingCount={pendingCount} approvedCount={approvedCount} issueCount={issueCount} navigate={navigate} openReview={openReview} displayName={displayName} />}
         {page === 'guidelines' && <GuidelinesPage guidelines={guidelines} documents={documentState} onDocumentsChanged={setDocumentState} onSaved={(saved) => { setGuidelines(saved); setNotice('Brand guidelines saved.') }} setBackendError={setBackendError} />}
         {page === 'review' && <ReviewPage selectedReview={selectedReview} reviews={reviews} onOpenVersion={openReview} onCreated={(review) => { setReviews((current) => [review, ...current]); setSelectedReview(review); setNotice('Content reviewed and saved to history.') }} onDecision={onDecision} onRecheckStart={() => setSelectedReview(null)} guidelines={guidelines} />}
         {page === 'history' && <HistoryPage reviews={reviews} openReview={openReview} />}
@@ -209,6 +250,54 @@ function App() {
       </main>
       <BrandAssistant reviewId={page === 'review' ? selectedReview?.id : null} />
     </div>
+  )
+}
+
+function WelcomePage({ onContinue, error }) {
+  const [name, setName] = useState('')
+  const [validationError, setValidationError] = useState('')
+
+  const handleSubmit = (event) => {
+    event.preventDefault()
+    const trimmedName = name.trim()
+    if (!trimmedName) {
+      setValidationError('Please enter your name to continue.')
+      return
+    }
+    setValidationError('')
+    onContinue(trimmedName)
+  }
+
+  return (
+    <main className="welcome-page">
+      <section className="welcome-card" aria-labelledby="welcome-title">
+        <div className="brand-lockup welcome-brand"><span className="brand-mark"><Icon name="shield" size={23} /></span><span>brandguard<span className="brand-ai">.ai</span><small>BRAND GOVERNANCE</small></span></div>
+        <div className="welcome-copy">
+          <p className="eyebrow">YOUR MANAGER WORKSPACE</p>
+          <h1 id="welcome-title">Welcome to BrandGuard AI</h1>
+          <p className="welcome-subtitle">Your workspace for consistent, on-brand content.</p>
+        </div>
+        <form className="welcome-form" onSubmit={handleSubmit} noValidate>
+          <label htmlFor="display-name">What should we call you?</label>
+          <input
+            id="display-name"
+            type="text"
+            value={name}
+            onChange={(event) => {
+              setName(event.target.value)
+              setValidationError('')
+            }}
+            placeholder="Enter your name"
+            autoComplete="name"
+            maxLength={80}
+            aria-describedby={validationError || error ? 'welcome-error' : undefined}
+          />
+          {(validationError || error) && <p className="welcome-error" id="welcome-error" role="alert">{validationError || error}</p>}
+          <button className="button button-primary welcome-submit" type="submit">Continue to Workspace <Icon name="arrow" size={16} /></button>
+        </form>
+        <p className="welcome-note">Your name is saved only in this browser.</p>
+      </section>
+    </main>
   )
 }
 
@@ -302,11 +391,11 @@ function BrandAssistant({ reviewId }) {
   </div>
 }
 
-function Dashboard({ reviews, pendingCount, approvedCount, issueCount, navigate, openReview }) {
+function Dashboard({ reviews, pendingCount, approvedCount, issueCount, navigate, openReview, displayName }) {
   const recent = reviews.slice(0, 5)
   const chartData = reviews.slice(0, 7).reverse()
   return <div className="content-wrap dashboard-page">
-    <PageHeading eyebrow={TODAY_LABEL} title="Good to see you, SYNAPSE." description="A clear view of how every message measures up to your brand." action={<button className="button button-primary" onClick={() => navigate('review')}><Icon name="plus" size={18} /> Review content</button>} />
+    <PageHeading eyebrow={TODAY_LABEL} title={`Good to see you, ${displayName}.`} description="A clear view of how every message measures up to your brand." action={<button className="button button-primary" onClick={() => navigate('review')}><Icon name="plus" size={18} /> Review content</button>} />
     <section className="welcome-strip"><div className="welcome-symbol"><Icon name="spark" size={22} /></div><div><strong>Your brand, consistently understood.</strong><p>Check copy against your guidelines before it goes live.</p></div><button className="text-button" onClick={() => navigate('guidelines')}>Manage guidelines <Icon name="arrow" size={16} /></button></section>
     <section className="stat-grid" aria-label="Review metrics">
       <StatCard label="Content reviewed" value={reviews.length} detail={reviews.length ? 'Across all review types' : 'No reviews yet'} icon="file" tone="purple" />
