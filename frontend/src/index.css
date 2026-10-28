@@ -1,0 +1,63 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Instrument+Serif&family=Manrope:wght@400;500;600;700;800&display=swap');
+
+:root {
+  font-family: 'DM Sans', 'Segoe UI', sans-serif;
+  color: var(--text);
+  background: var(--background);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-optical-sizing: auto;
+  font-weight: 400;
+  color-scheme: light;
+  --background: #FBF6EF;
+  --sidebar: #FFFDF9;
+  --surface: #FFFDF9;
+  --surface-raised: #FFFFFF;
+  --surface-hover: #F8F1EB;
+  --text: #0D0D0C;
+  --muted: #77736F;
+  --border: #E9E3DC;
+  --accent: #7662B5;
+  --accent-ink: #FFFFFF;
+  --lavender: #8A74C6;
+  --lavender-soft: #F0EAFB;
+  --peach: #F8DCC7;
+  --sage: #DFE9D4;
+  --rose: #ECD6E2;
+  --soft-yellow: #F2ECDF;
+  --success: #4F7656;
+  --warning: #8D6C32;
+  --error: #A85863;
+  --accent-soft: #F0EAFB;
+  --success-soft: #DFE9D4;
+  --warning-soft: #F2ECDF;
+  --error-soft: #F4E3E4;
+  --focus-ring: rgba(138, 116, 198, .42);
+  --shadow: 0 8px 26px rgba(64, 48, 34, .055);
+  --shadow-hover: 0 14px 32px rgba(64, 48, 34, .09);
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --radius-sm: 9px;
+  --radius-md: 14px;
+  --radius-lg: 18px;
+  --font-body: 'DM Sans', 'Segoe UI', sans-serif;
+  --font-display: 'Instrument Serif', Georgia, serif;
+}
+
+* { box-sizing: border-box; }
+html { background: var(--background); }
+body { margin: 0; min-width: 320px; min-height: 100vh; color: var(--text); background: var(--background); }
+button, input, select, textarea { font: inherit; }
+button { cursor: pointer; }
+button:disabled { cursor: not-allowed; opacity: .58; }
+button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible {
+  outline: 3px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+::selection { color: var(--background); background: var(--accent); }
